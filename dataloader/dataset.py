@@ -8,6 +8,7 @@ from dataloader.DDFF12.loader import DDFF12Loader
 from .NYU.loader import NYULoader
 from dataloader.ARKitScenes.loader import ARKitScenesLoader
 from dataloader.smartphone.loader import SmartphoneLoader
+from dataloader.BBBC006.loader import BBBC006Loader # Added for BBBC006 dataset
 
 
 class DDFF12DataModule(pl.LightningDataModule):
@@ -236,3 +237,110 @@ class ARKitScenesDataModule(pl.LightningDataModule):
 
     def predict_dataloader(self):
         return DataLoader(self.test_dataset, batch_size=1, num_workers=self.num_workers)
+
+#
+# ========================================================================
+#   NEW DATAMODULE FOR BBBC006
+# ========================================================================
+#
+class BBBC006DataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        bbbc006_data_root: str = "",
+        img_size: Tuple = (512, 512),
+        batch_size: int = 32,
+        num_workers: int = 16,
+        n_stack: int = 5,
+        optimal_focus_index: int = 16,
+        z_step_um: float = 2.0,
+        val_split: float = 0.1,
+        use_labels: bool = True,
+        num_cluster: int = 5,
+    ):
+        """Initialize the data module."""
+        super().__init__()
+        self.database_root = bbbc006_data_root
+        self.image_size = img_size
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.n_stack = n_stack
+        self.optimal_focus_index = optimal_focus_index
+        self.z_step_um = z_step_um
+        self.val_split = val_split
+        self.use_labels = use_labels
+        self.num_cluster = num_cluster
+        
+        # These will be populated in setup()
+        self.full_dataset = None
+        self.train_split = None
+        self.val_split_dataset = None
+        self.test_dataset = None
+
+    def setup(self, stage: str):
+        
+        # setup is called per-process, so we can create dataset instances here
+        
+        if stage == "fit":
+            self.full_dataset = BBBC006Loader(
+                root_dir=self.database_root,
+                img_size=self.image_size,
+                n_stack=self.n_stack,
+                optimal_focus_index=self.optimal_focus_index,
+                z_step_um=self.z_step_um
+            )
+            
+            # Split the dataset into train and validation
+            val_size = int(len(self.full_dataset) * self.val_split)
+            train_size = len(self.full_dataset) - val_size
+            
+            self.train_split, self.val_split_dataset = random_split(
+                self.full_dataset, 
+                [train_size, val_size],
+                generator=torch.Generator().manual_seed(42) # for reproducibility
+            )
+            
+        if stage == "test":
+            self.test_dataset = BBBC006Loader(
+                root_dir=self.database_root,
+                img_size=self.image_size,
+                n_stack=self.n_stack,
+                optimal_focus_index=self.optimal_focus_index,
+                z_step_um=self.z_step_um
+            )
+            # Set the test dataset to 'test' mode (fixed slices)
+            self.test_dataset.set_stage("test")
+
+
+    def train_dataloader(self):
+        # Set the underlying dataset to 'train' mode (random slices)
+        # self.train_split is a Subset, .dataset accesses the original BBBC006Loader
+        self.train_split.dataset.set_stage("train")
+        return DataLoader(
+            self.train_split,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+        )
+
+    def val_dataloader(self):
+        # Set the underlying dataset to 'val' mode (fixed slices)
+        self.val_split_dataset.dataset.set_stage("val")
+        return DataLoader(
+            self.val_split_dataset, 
+            batch_size=1, # Often 1 for validation
+            num_workers=self.num_workers
+        )
+
+    def test_dataloader(self):
+        return DataLoader(
+            self.test_dataset, 
+            batch_size=1, 
+            num_workers=self.num_workers
+        )
+
+    def predict_dataloader(self):
+        return DataLoader(
+            self.test_dataset, 
+            batch_size=1, 
+            num_workers=self.num_workers
+        )
