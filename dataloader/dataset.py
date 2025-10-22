@@ -251,7 +251,6 @@ class BBBC006DataModule(pl.LightningDataModule):
         batch_size: int = 32,
         num_workers: int = 16,
         n_stack: int = 5,
-        optimal_focus_index: int = 16,
         z_step_um: float = 2.0,
         val_split: float = 0.1,
         use_labels: bool = True,
@@ -264,7 +263,6 @@ class BBBC006DataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.n_stack = n_stack
-        self.optimal_focus_index = optimal_focus_index
         self.z_step_um = z_step_um
         self.val_split = val_split
         self.use_labels = use_labels
@@ -285,7 +283,6 @@ class BBBC006DataModule(pl.LightningDataModule):
                 root_dir=self.database_root,
                 img_size=self.image_size,
                 n_stack=self.n_stack,
-                optimal_focus_index=self.optimal_focus_index,
                 z_step_um=self.z_step_um
             )
             
@@ -304,7 +301,6 @@ class BBBC006DataModule(pl.LightningDataModule):
                 root_dir=self.database_root,
                 img_size=self.image_size,
                 n_stack=self.n_stack,
-                optimal_focus_index=self.optimal_focus_index,
                 z_step_um=self.z_step_um
             )
             # Set the test dataset to 'test' mode (fixed slices)

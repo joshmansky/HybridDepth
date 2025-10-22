@@ -21,15 +21,20 @@ def load_stack_from_paths(paths):
 
 def compute_depth_and_aif(stack, optimal_focus_index=16, z_step_um=2.0):
     """
-    Returns a 2D map of absolute depth in microns and the All-in-Focus image.
+    Returns a 2D map of positive depth in microns and the All-in-Focus image.
+    
+    Depth is calculated as (best_focus_index + 1) * z_step_um to ensure
+    all depth values are positive (range [2.0, 64.0]).
+    
     stack: [z, H, W]
     """
     # Compute focus measure (variance of Laplacian)
     focus_measures = np.stack([filters.laplace(s)**2 for s in stack])
     best_focus_indices = np.argmax(focus_measures, axis=0) # [H, W]
 
-    # Convert slice index → absolute depth in microns
-    depth_um = (best_focus_indices - optimal_focus_index) * z_step_um
+    # Convert slice index → positive depth value
+    # We use (best_focus_indices + 1) to ensure depth is always > 0
+    depth_um = (best_focus_indices.astype(np.float32) + 1.0) * z_step_um
     
     # Create AIF image by sampling pixels from the best-focused slice
     h, w = stack.shape[1:]

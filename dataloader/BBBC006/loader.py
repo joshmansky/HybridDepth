@@ -19,7 +19,6 @@ class BBBC006Loader(Dataset):
         root_dir: str,
         img_size: Tuple = (512, 512),
         n_stack: int = 5,
-        optimal_focus_index: int = 16,
         z_step_um: float = 2.0,
     ) -> None:
         super(BBBC006Loader, self).__init__()
@@ -33,7 +32,6 @@ class BBBC006Loader(Dataset):
 
         self.n_stack = n_stack
         self.total_slices = 32 # BBBC006 has 32 z-slices
-        self.optimal_focus_index = optimal_focus_index
         self.z_step_um = z_step_um
         self.stage = "train" # Default stage
         
@@ -93,7 +91,7 @@ class BBBC006Loader(Dataset):
         depth_transformed = self.depth_transform(depth_tensor)
         
         # Create focus distances tensor
-        focus_distances = (selected_indices.astype(np.float32) - self.optimal_focus_index) * self.z_step_um
+        focus_distances = (selected_indices.astype(np.float32) + 1.0) * self.z_step_um
         focus_distances_tensor = torch.from_numpy(focus_distances)
         
         # Create a valid mask (all pixels are valid in this dataset)
