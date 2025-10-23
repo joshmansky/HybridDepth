@@ -299,12 +299,13 @@ class BBBC006DataModule(pl.LightningDataModule):
                  raise ValueError(f"Splits are invalid: train={train_size}, val={val_size}, test={test_size}. "
                                   f"Check split percentages. Total size is {total_size}.")
 
-            # Perform the three-way split
-            self.train_split, self.val_split_dataset, self.test_split_dataset = random_split(
-                self.full_dataset, 
-                [train_size, val_size, test_size],
-                generator=torch.Generator().manual_seed(self.seed)
-            )
+        # We explicitly pass a torch.Generator seeded with self.seed.
+        # This guarantees the split is identical every time.
+        self.train_split, self.val_split_dataset, self.test_dataset = random_split(
+            self.full_dataset, 
+            [train_size, val_size, test_size],
+            generator=torch.Generator().manual_seed(self.seed)
+        )
 
         # Assign the correct subset for the 'test' stage
         if stage == "test":
