@@ -252,7 +252,9 @@ class BBBC006DataModule(pl.LightningDataModule):
         num_workers: int = 16,
         n_stack: int = 5,
         z_step_um: float = 2.0,
-        val_split: float = 0.1,
+        val_split_percent: float = 0.1,  # e.g., 10% for validation
+        test_split_percent: float = 0.1, # e.g., 10% for testing
+        seed: int = 42,                  # For reproducible splits
         use_labels: bool = True,
         num_cluster: int = 5,
     ):
@@ -264,21 +266,22 @@ class BBBC006DataModule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.n_stack = n_stack
         self.z_step_um = z_step_um
-        self.val_split = val_split
+        self.val_split_percent = val_split_percent
+        self.test_split_percent = test_split_percent
+        self.seed = seed
         self.use_labels = use_labels
         self.num_cluster = num_cluster
         
         # These will be populated in setup()
-        self.full_dataset = None
         self.train_split = None
         self.val_split_dataset = None
-        self.test_dataset = None
+        self.test_split_dataset = None
+        self.full_dataset = None # Keep a reference
 
     def setup(self, stage: str):
         
-        # setup is called per-process, so we can create dataset instances here
-        
-        if stage == "fit":
+        # We only need to perform the split once
+        if self.full_dataset is None:
             self.full_dataset = BBBC006Loader(
                 root_dir=self.database_root,
                 img_size=self.image_size,
@@ -286,30 +289,32 @@ class BBBC006DataModule(pl.LightningDataModule):
                 z_step_um=self.z_step_um
             )
             
-            # Split the dataset into train and validation
-            val_size = int(len(self.full_dataset) * self.val_split)
-            train_size = len(self.full_dataset) - val_size
-            
-            self.train_split, self.val_split_dataset = random_split(
+            # Calculate split sizes
+            total_size = len(self.full_dataset)
+            test_size = int(total_size * self.test_split_percent)
+            val_size = int(total_size * self.val_split_percent)
+            train_size = total_size - val_size - test_size
+
+            if train_size <= 0 or val_size <= 0 or test_size <= 0:
+                 raise ValueError(f"Splits are invalid: train={train_size}, val={val_size}, test={test_size}. "
+                                  f"Check split percentages. Total size is {total_size}.")
+
+            # Perform the three-way split
+            self.train_split, self.val_split_dataset, self.test_split_dataset = random_split(
                 self.full_dataset, 
-                [train_size, val_size],
-                generator=torch.Generator().manual_seed(42) # for reproducibility
+                [train_size, val_size, test_size],
+                generator=torch.Generator().manual_seed(self.seed)
             )
-            
+
+        # Assign the correct subset for the 'test' stage
         if stage == "test":
-            self.test_dataset = BBBC006Loader(
-                root_dir=self.database_root,
-                img_size=self.image_size,
-                n_stack=self.n_stack,
-                z_step_um=self.z_step_um
-            )
-            # Set the test dataset to 'test' mode (fixed slices)
-            self.test_dataset.set_stage("test")
+            self.test_dataset = self.test_split_dataset
 
 
     def train_dataloader(self):
         # Set the underlying dataset to 'train' mode (random slices)
         # self.train_split is a Subset, .dataset accesses the original BBBC006Loader
+        if self.train_split is None: self.setup("fit")
         self.train_split.dataset.set_stage("train")
         return DataLoader(
             self.train_split,
@@ -320,6 +325,7 @@ class BBBC006DataModule(pl.LightningDataModule):
 
     def val_dataloader(self):
         # Set the underlying dataset to 'val' mode (fixed slices)
+        if self.val_split_dataset is None: self.setup("fit")
         self.val_split_dataset.dataset.set_stage("val")
         return DataLoader(
             self.val_split_dataset, 
@@ -328,15 +334,21 @@ class BBBC006DataModule(pl.LightningDataModule):
         )
 
     def test_dataloader(self):
+        # Set the underlying dataset to 'test' mode (fixed slices)
+        if self.test_split_dataset is None: self.setup("test")
+        self.test_split_dataset.dataset.set_stage("test")
         return DataLoader(
-            self.test_dataset, 
+            self.test_split_dataset, 
             batch_size=1, 
             num_workers=self.num_workers
         )
 
     def predict_dataloader(self):
+        # By default, predict on the test set
+        if self.test_split_dataset is None: self.setup("test")
+        self.test_split_dataset.dataset.set_stage("test")
         return DataLoader(
-            self.test_dataset, 
+            self.test_split_dataset, 
             batch_size=1, 
             num_workers=self.num_workers
         )

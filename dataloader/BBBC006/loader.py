@@ -35,10 +35,11 @@ class BBBC006Loader(Dataset):
         self.z_step_um = z_step_um
         self.stage = "train" # Default stage
         
-        # Define transforms
-        # Grayscale images, so we use a single mean/std
-        self.mean_input = [0.5]
-        self.std_input = [0.5]
+        # --- MODIFIED ---
+        # Grayscale images, but we will expand to 3 channels to match
+        # the model's pre-trained input layers.
+        self.mean_input = [0.5, 0.5, 0.5]
+        self.std_input = [0.5, 0.5, 0.5]
         
         self.img_transform = transforms.Compose([
             transforms.Resize(img_size, antialias=True),
@@ -79,15 +80,21 @@ class BBBC006Loader(Dataset):
         
         # Convert to Tensors
         # .unsqueeze(0) is not needed as ToTensor() handles [H, W] -> [1, H, W]
-        aif_tensor = self.to_tensor(aif_image).float()
-        depth_tensor = self.to_tensor(depth_map).float()
+        aif_tensor = self.to_tensor(aif_image).float()       # [1, H, W]
+        depth_tensor = self.to_tensor(depth_map).float()     # [1, H, W]
         
         # Convert stack: [n_stack, H, W] -> [n_stack, 1, H, W]
-        stack_tensor = torch.stack([self.to_tensor(s) for s in focal_stack]).float()
+        stack_tensor = torch.stack([self.to_tensor(s) for s in focal_stack]).float() # [N, 1, H, W]
+
+        # --- MODIFIED ---
+        # Expand 1-channel grayscale to 3-channel "pseudo-RGB"
+        # .expand() is memory-efficient as it just creates a view
+        aif_tensor_rgb = aif_tensor.expand(3, -1, -1)             # [3, H, W]
+        stack_tensor_rgb = stack_tensor.expand(-1, 3, -1, -1)     # [N, 3, H, W]
 
         # Apply transforms (Resize + Normalize)
-        aif_transformed = self.img_transform(aif_tensor)
-        stack_transformed = self.img_transform(stack_tensor)
+        aif_transformed = self.img_transform(aif_tensor_rgb)
+        stack_transformed = self.img_transform(stack_tensor_rgb)
         depth_transformed = self.depth_transform(depth_tensor)
         
         # Create focus distances tensor
@@ -98,3 +105,4 @@ class BBBC006Loader(Dataset):
         mask = torch.ones_like(depth_transformed, dtype=torch.bool)
         
         return aif_transformed, stack_transformed, depth_transformed, focus_distances_tensor, mask
+
