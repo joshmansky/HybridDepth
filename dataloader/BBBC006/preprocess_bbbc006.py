@@ -19,7 +19,7 @@ def load_stack_from_paths(paths):
     stack = np.stack([io.imread(p).astype(np.float32) / 255.0 for p in paths], axis=0)
     return stack
 
-def compute_depth_and_aif(stack, optimal_focus_index=16, z_step_um=2.0):
+def compute_depth_and_aif(stack, z_step_um=2.0, smoothing_sigma=5.0):
     """
     Returns a 2D map of positive depth in microns and the All-in-Focus image.
     
@@ -28,15 +28,36 @@ def compute_depth_and_aif(stack, optimal_focus_index=16, z_step_um=2.0):
     
     stack: [z, H, W]
     """
-    # Compute focus measure (variance of Laplacian)
-    focus_measures = np.stack([filters.laplace(s)**2 for s in stack])
+    
+    print("Computing focus measures...")
+    
+    # We will store the *smooth* focus measures here
+    smooth_focus_measures = []
+    
+    for s in stack:
+        # 1. Compute the pixel-wise focus measure (Squared Laplacian)
+        # This is the same as before, but we don't stack it yet
+        lap_sq = filters.laplace(s)**2
+        
+        # 2. Smooth the focus measure map
+        # We apply a Gaussian filter to the *focus measure itself*.
+        # This averages the sharpness over a local patch, making it
+        # robust to pixel-noise and creating smooth regions.
+        smooth_focus = filters.gaussian(lap_sq, sigma=smoothing_sigma)
+        
+        smooth_focus_measures.append(smooth_focus)
+    
+    # 3. Stack the *smoothed* focus measures
+    focus_measures = np.stack(smooth_focus_measures)
+    
+    print("Finding best focus indices...")
     best_focus_indices = np.argmax(focus_measures, axis=0) # [H, W]
-
+    
     # Convert slice index → positive depth value
-    # We use (best_focus_indices + 1) to ensure depth is always > 0
     depth_um = (best_focus_indices.astype(np.float32) + 1.0) * z_step_um
     
     # Create AIF image by sampling pixels from the best-focused slice
+    print("Creating AIF image...")
     h, w = stack.shape[1:]
     I, J = np.meshgrid(np.arange(h), np.arange(w), indexing='ij')
     aif_image = stack[best_focus_indices, I, J]
