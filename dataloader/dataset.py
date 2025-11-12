@@ -3,12 +3,13 @@ from os import listdir
 from os.path import isfile, join
 from torch.utils.data import DataLoader, random_split
 import torch
-from typing import Tuple
+from typing import Tuple, Optional
 from dataloader.DDFF12.loader import DDFF12Loader
 from .NYU.loader import NYULoader
 from dataloader.ARKitScenes.loader import ARKitScenesLoader
 from dataloader.smartphone.loader import SmartphoneLoader
 from dataloader.BBBC006.loader import BBBC006Loader # Added for BBBC006 dataset
+from dataloader.AllenCell.loader import AllenCellLoader
 
 
 class DDFF12DataModule(pl.LightningDataModule):
@@ -150,7 +151,8 @@ class NYUDataModule(pl.LightningDataModule):
                 n_stack=self.n_stack,
                 stage="train"
             )
-            self.test_dataset = NYULoader(
+            # This should probably be self.valid_dataset
+            self.valid_dataset = NYULoader(
                 self.nyu_data_root,
                 img_size=self.image_size,
                 remove_white_border=self.remove_white_border,
@@ -174,8 +176,10 @@ class NYUDataModule(pl.LightningDataModule):
         )
 
     def val_dataloader(self):
+        # Corrected to use self.valid_dataset if it exists
+        dataset = self.valid_dataset if hasattr(self, 'valid_dataset') else self.test_dataset
         return DataLoader(
-            self.test_dataset, batch_size=1, num_workers=self.num_workers
+            dataset, batch_size=1, num_workers=self.num_workers
         )
 
     def test_dataloader(self):
@@ -299,17 +303,28 @@ class BBBC006DataModule(pl.LightningDataModule):
                  raise ValueError(f"Splits are invalid: train={train_size}, val={val_size}, test={test_size}. "
                                   f"Check split percentages. Total size is {total_size}.")
 
-        # We explicitly pass a torch.Generator seeded with self.seed.
-        # This guarantees the split is identical every time.
-        self.train_split, self.val_split_dataset, self.test_dataset = random_split(
-            self.full_dataset, 
-            [train_size, val_size, test_size],
-            generator=torch.Generator().manual_seed(self.seed)
-        )
+            # We explicitly pass a torch.Generator seeded with self.seed.
+            # This guarantees the split is identical every time.
+            
+            # --- FIX: Moved random_split INSIDE the if-block ---
+            # --- FIX: Changed self.test_dataset to self.test_split_dataset ---
+            self.train_split, self.val_split_dataset, self.test_split_dataset = random_split(
+                self.full_dataset, 
+                [train_size, val_size, test_size],
+                generator=torch.Generator().manual_seed(self.seed)
+            )
 
-        # Assign the correct subset for the 'test' stage
+        # Assign the correct subset for the current stage
+        # This ensures trainer.fit() and trainer.test() work independently
+        if stage == "fit":
+            self.train_dataset = self.train_split
+            self.valid_dataset = self.val_split_dataset
+        
         if stage == "test":
             self.test_dataset = self.test_split_dataset
+
+        if stage == "validate":
+            self.valid_dataset = self.val_split_dataset
 
 
     def train_dataloader(self):
@@ -326,7 +341,7 @@ class BBBC006DataModule(pl.LightningDataModule):
 
     def val_dataloader(self):
         # Set the underlying dataset to 'val' mode (fixed slices)
-        if self.val_split_dataset is None: self.setup("fit")
+        if self.val_split_dataset is None: self.setup("validate") # Use "validate" stage
         self.val_split_dataset.dataset.set_stage("val")
         return DataLoader(
             self.val_split_dataset, 
@@ -352,4 +367,113 @@ class BBBC006DataModule(pl.LightningDataModule):
             self.test_split_dataset, 
             batch_size=1, 
             num_workers=self.num_workers
+        )
+    
+
+class AllenCellDataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        data_root: str,
+        img_size: Tuple = (256, 256),
+        batch_size: int = 16,
+        num_workers: int = 8,
+        n_stack: int = 10,
+        n_buckets: int = 5,
+        val_split_percent: float = 0.1,
+        test_split_percent: float = 0.1,
+        seed: int = 42,
+    ):
+        """Initialize the data module."""
+        super().__init__()
+        self.database_root = data_root
+        self.image_size = img_size
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.n_stack = n_stack
+        self.n_buckets = n_buckets
+        self.val_split_percent = val_split_percent
+        self.test_split_percent = test_split_percent
+        self.seed = seed
+        
+        # These will be populated in setup()
+        self.full_dataset: Optional[AllenCellLoader] = None
+        self.train_split: Optional[torch.utils.data.Subset] = None
+        self.val_split_dataset: Optional[torch.utils.data.Subset] = None
+        self.test_split_dataset: Optional[torch.utils.data.Subset] = None
+
+    def setup(self, stage: Optional[str] = None):
+        
+        # We only need to perform the split once
+        if self.full_dataset is None:
+            self.full_dataset = AllenCellLoader(
+                root_dir=self.database_root,
+                img_size=self.image_size,
+                n_stack=self.n_stack,
+                n_buckets=self.n_buckets
+            )
+            
+            # Calculate split sizes
+            total_size = len(self.full_dataset)
+            test_size = int(total_size * self.test_split_percent)
+            val_size = int(total_size * self.val_split_percent)
+            train_size = total_size - val_size - test_size
+
+            if train_size <= 0 or val_size <= 0:
+                 print(f"Warning: Train/Val split is small. total={total_size}, "
+                       f"train={train_size}, val={val_size}, test={test_size}.")
+            if train_size <= 0:
+                raise ValueError("Train size is 0. Check split percentages or dataset size.")
+
+            # We explicitly pass a torch.Generator seeded with self.seed.
+            self.train_split, self.val_split_dataset, self.test_split_dataset = random_split(
+                self.full_dataset, 
+                [train_size, val_size, test_size],
+                generator=torch.Generator().manual_seed(self.seed)
+            )
+
+        # Assign the correct subset for the current stage
+        if stage == "fit" or stage is None:
+            self.train_dataset = self.train_split
+            self.valid_dataset = self.val_split_dataset
+        
+        if stage == "test" or stage is None:
+            self.test_dataset = self.test_split_dataset
+
+        if stage == "validate":
+            self.valid_dataset = self.val_split_dataset
+
+
+    def train_dataloader(self):
+        # Set the underlying dataset to 'train' mode (random slices)
+        # self.train_split is a Subset, .dataset accesses the original AllenCellLoader
+        if self.train_split is None: self.setup("fit")
+        self.train_split.dataset.set_stage("train")
+        return DataLoader(
+            self.train_split,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            pin_memory=True,
+        )
+
+    def val_dataloader(self):
+        # Set the underlying dataset to 'val' mode (fixed slices)
+        if self.val_split_dataset is None: self.setup("validate")
+        self.val_split_dataset.dataset.set_stage("val")
+        return DataLoader(
+            self.val_split_dataset, 
+            batch_size=1, # Always 1 for validation
+            num_workers=self.num_workers,
+            pin_memory=True,
+        )
+
+    def test_dataloader(self):
+        # Set the underlying dataset to 'test' mode (fixed slices)
+        if self.test_split_dataset is None: self.setup("test")
+        self.test_split_dataset.dataset.set_stage("test")
+        return DataLoader(
+            self.test_split_dataset, 
+            batch_size=1, # Always 1 for testing
+            num_workers=self.num_workers,
+            pin_memory=True,
         )
