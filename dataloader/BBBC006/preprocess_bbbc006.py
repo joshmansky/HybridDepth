@@ -19,7 +19,7 @@ def load_stack_from_paths(paths):
     stack = np.stack([io.imread(p).astype(np.float32) / 255.0 for p in paths], axis=0)
     return stack
 
-def compute_depth_and_aif(stack, z_step_um=2.0, smoothing_sigma=5.0):
+def compute_depth_and_aif(stack, z_step_um=2.0, pre_smoothing_sigma=3.0, focus_map_smoothing_sigma=0.0):
     """
     Returns a 2D map of positive depth in microns and the All-in-Focus image.
     
@@ -35,19 +35,23 @@ def compute_depth_and_aif(stack, z_step_um=2.0, smoothing_sigma=5.0):
     smooth_focus_measures = []
     
     for s in stack:
-        # 1. Compute the pixel-wise focus measure (Squared Laplacian)
-        # This is the same as before, but we don't stack it yet
-        lap_sq = filters.laplace(s)**2
+        # 1. (NEW) Pre-smooth the image slice to reduce noise
+        # This addresses your request to smooth before the focus measure.
+        s_smooth = filters.gaussian(s, sigma=pre_smoothing_sigma)
+
+        # 2. Compute the pixel-wise focus measure (Squared Laplacian)
+        # We compute this on the *smoothed* image.
+        lap_sq = filters.laplace(s_smooth)**2
         
-        # 2. Smooth the focus measure map
+        # 3. (Original) Smooth the *focus measure map*
         # We apply a Gaussian filter to the *focus measure itself*.
         # This averages the sharpness over a local patch, making it
         # robust to pixel-noise and creating smooth regions.
-        smooth_focus = filters.gaussian(lap_sq, sigma=smoothing_sigma)
+        #smooth_focus = filters.gaussian(lap_sq, sigma=focus_map_smoothing_sigma)
         
-        smooth_focus_measures.append(smooth_focus)
+        smooth_focus_measures.append(lap_sq)
     
-    # 3. Stack the *smoothed* focus measures
+    # 4. Stack the *smoothed* focus measures
     focus_measures = np.stack(smooth_focus_measures)
     
     print("Finding best focus indices...")

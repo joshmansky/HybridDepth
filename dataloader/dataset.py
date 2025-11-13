@@ -373,7 +373,7 @@ class BBBC006DataModule(pl.LightningDataModule):
 class AllenCellDataModule(pl.LightningDataModule):
     def __init__(
         self,
-        data_root: str,
+        processed_data_dir: str,
         img_size: Tuple = (256, 256),
         batch_size: int = 16,
         num_workers: int = 8,
@@ -382,10 +382,12 @@ class AllenCellDataModule(pl.LightningDataModule):
         val_split_percent: float = 0.1,
         test_split_percent: float = 0.1,
         seed: int = 42,
+        # --- FIX 2: Add 'channel_to_use' to the __init__ ---
+        channel_to_use: str = 'dna', 
     ):
         """Initialize the data module."""
         super().__init__()
-        self.database_root = data_root
+        self.processed_data_dir = processed_data_dir # Corrected path argument
         self.image_size = img_size
         self.batch_size = batch_size
         self.num_workers = num_workers
@@ -394,6 +396,7 @@ class AllenCellDataModule(pl.LightningDataModule):
         self.val_split_percent = val_split_percent
         self.test_split_percent = test_split_percent
         self.seed = seed
+        self.channel_to_use = channel_to_use # <-- Store the argument
         
         # These will be populated in setup()
         self.full_dataset: Optional[AllenCellLoader] = None
@@ -406,10 +409,13 @@ class AllenCellDataModule(pl.LightningDataModule):
         # We only need to perform the split once
         if self.full_dataset is None:
             self.full_dataset = AllenCellLoader(
-                root_dir=self.database_root,
+                # Use the correct argument name
+                processed_dir=self.processed_data_dir, 
                 img_size=self.image_size,
                 n_stack=self.n_stack,
-                n_buckets=self.n_buckets
+                n_buckets=self.n_buckets,
+                # --- FIX 3: Pass 'channel_to_use' to the loader ---
+                channel_to_use=self.channel_to_use
             )
             
             # Calculate split sizes
